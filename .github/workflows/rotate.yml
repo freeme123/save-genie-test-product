@@ -60,20 +60,6 @@ jobs:
           BASE_URL: ${{ steps.pages.outputs.base_url }}
           COMMAND: ${{ github.event.inputs.command || 'none' }}
 
-      # Persist any manual-override change back to the repo. [skip ci] avoids
-      # re-triggering this workflow (this same run already deploys below).
-      - name: Persist state
-        run: |
-          if [[ -n "$(git status --porcelain state.json)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add state.json
-            git commit -m "chore: update product state [skip ci]"
-            git push
-          else
-            echo "No state change to persist."
-          fi
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -82,3 +68,31 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      # Persist any manual-override change back to the repo, AFTER deploy so a
+      # push race can never block serving the new price. Re-sync onto the latest
+      # main and re-apply our state each attempt (last-writer-wins). [skip ci]
+      # avoids re-triggering this workflow. Never fails the job.
+      - name: Persist state
+        continue-on-error: true
+        run: |
+          if [[ -z "$(git status --porcelain state.json)" ]]; then
+            echo "No state change to persist."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp state.json /tmp/state.json
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main
+            git reset -q --hard origin/main          # untracked public/ is preserved
+            cp /tmp/state.json state.json
+            if git diff --quiet state.json; then
+              echo "Remote already matches desired state; nothing to push."; exit 0
+            fi
+            git add state.json
+            git commit -q -m "chore: update product state [skip ci]"
+            if git push; then echo "Persisted on attempt $i."; exit 0; fi
+            echo "Push rejected (attempt $i) — retrying after re-sync."
+            sleep 2
+          done
+          echo "::warning::Could not persist state.json after 5 attempts (non-fatal; deploy already succeeded)."
