@@ -2,19 +2,32 @@ name: Rotate price & deploy
 
 on:
   # Rebuild hourly so the served HTML never lags the time-derived price.
-  # (Scheduled runs are best-effort on GitHub's side and may be delayed a
-  # few minutes under load — fine for a "changes every few hours" page.)
+  # (Scheduled runs are best-effort and may be delayed a few minutes — fine.)
   schedule:
     - cron: "0 * * * *"
-  # Manual trigger from the Actions tab.
+  # Manual / on-demand trigger with a command. Used by trigger.sh and the
+  # "Run workflow" button in the Actions tab.
   workflow_dispatch:
+    inputs:
+      command:
+        description: "What to change"
+        type: choice
+        default: none
+        options:
+          - none # re-render at current state (clock if no override)
+          - drop # lower price by $10
+          - raise # raise price by $10
+          - toggle_stock # flip in/out of stock
+          - set_instock
+          - set_outofstock
+          - reset # clear overrides, back to automatic clock mode
   # Build on every push to main (e.g. when you change the schedule).
   push:
     branches: [main]
 
-# Required for the GitHub Pages deployment action.
+# contents:write lets us persist state.json; pages/id-token for deployment.
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -45,6 +58,21 @@ jobs:
         run: node generate.js
         env:
           BASE_URL: ${{ steps.pages.outputs.base_url }}
+          COMMAND: ${{ github.event.inputs.command || 'none' }}
+
+      # Persist any manual-override change back to the repo. [skip ci] avoids
+      # re-triggering this workflow (this same run already deploys below).
+      - name: Persist state
+        run: |
+          if [[ -n "$(git status --porcelain state.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "chore: update product state [skip ci]"
+            git push
+          else
+            echo "No state change to persist."
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
