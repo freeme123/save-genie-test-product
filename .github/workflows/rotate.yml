@@ -1,0 +1,56 @@
+name: Rotate price & deploy
+
+on:
+  # Rebuild hourly so the served HTML never lags the time-derived price.
+  # (Scheduled runs are best-effort on GitHub's side and may be delayed a
+  # few minutes under load — fine for a "changes every few hours" page.)
+  schedule:
+    - cron: "0 * * * *"
+  # Manual trigger from the Actions tab.
+  workflow_dispatch:
+  # Build on every push to main (e.g. when you change the schedule).
+  push:
+    branches: [main]
+
+# Required for the GitHub Pages deployment action.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; don't pile up concurrent ones.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Resolves the real Pages URL so JSON-LD/image use absolute URLs.
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Generate page
+        run: node generate.js
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,5 @@
+# Generated output (built by the Action in CI, and locally for preview)
+public/
+
+# Node
+node_modules/
